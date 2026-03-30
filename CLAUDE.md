@@ -1,104 +1,231 @@
-# CLAUDE.md - Project Rules
+# CLAUDE.md - Social Bloom AI Project Rules
 
-> Rules Claude follows in every conversation.
+> Project-specific rules for Claude Code. This file is read automatically.
 
 ---
 
-## Tech Stack
+## Project Overview
 
-- **Backend:** FastAPI + Python 3.11+
-- **Frontend:** React + TypeScript + Vite
-- **Database:** PostgreSQL + SQLAlchemy
-- **Auth:** JWT + Google OAuth
-- **UI:** Chakra UI or Tailwind + Framer Motion
+**Project Name:** Social Bloom AI
+**Description:** AI-powered platform that automates the complete social media content lifecycle — from idea to publishing — with multi-level approval workflows for teams and agencies.
+**Tech Stack:**
+- Backend: FastAPI + Python 3.11+
+- Frontend: React + Vite + TypeScript
+- Database: PostgreSQL + SQLAlchemy
+- Auth: Email/Password (JWT-based)all
+- UI: Tailwind CSS + shadcn/ui
 
 ---
 
 ## Project Structure
 
 ```
-project/
+social-bloom-ai/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py, config.py, database.py
-│   │   ├── models/, schemas/, routers/, services/, auth/
+│   │   ├── main.py
+│   │   ├── config.py
+│   │   ├── database.py
+│   │   ├── models/
+│   │   │   ├── user.py
+│   │   │   ├── content_request.py
+│   │   │   ├── creative.py
+│   │   │   ├── approval.py
+│   │   │   ├── publish_job.py
+│   │   │   ├── analytics.py
+│   │   │   └── audit_log.py
+│   │   ├── schemas/
+│   │   ├── routers/
+│   │   ├── services/
+│   │   └── auth/
 │   ├── alembic/
-│   └── tests/
+│   ├── tests/
+│   └── requirements.txt
 ├── frontend/
-│   └── src/
-│       ├── components/, pages/, hooks/, services/, context/, types/
-├── skills/           # 5 skill files
-├── agents/           # Agent definitions
-└── .claude/commands/ # /generate-prp, /execute-prp
+│   ├── src/
+│   │   ├── components/
+│   │   ├── pages/
+│   │   ├── hooks/
+│   │   ├── services/
+│   │   ├── context/
+│   │   └── types/
+│   └── package.json
+├── .claude/
+│   └── commands/
+├── skills/
+├── agents/
+└── PRPs/
 ```
 
 ---
 
 ## Code Standards
 
-### Python
+### Python (Backend)
 ```python
-# Type hints required
-def get_user(db: Session, user_id: int) -> User:
+# ALWAYS use type hints
+def get_content_request(db: Session, request_id: int) -> ContentRequest:
     pass
 
-# Async endpoints
-@router.get("/users/{id}")
-async def get_user(id: int, db: Session = Depends(get_db)):
+# ALWAYS use async endpoints
+@router.get("/content-requests/{id}")
+async def get_content_request(id: int, db: Session = Depends(get_db)):
     pass
 ```
 
-### TypeScript
+### TypeScript (Frontend)
 ```typescript
-// Interfaces required - NO any types
-interface User { id: number; email: string; }
+// ALWAYS define interfaces for props and data
+interface ContentRequest {
+  id: number;
+  title: string;
+  platform: "facebook" | "linkedin" | "instagram" | "twitter";
+  status: "draft" | "pending_review" | "reviewed" | "approved" | "rejected" | "published";
+}
 
-const fetchUser = async (id: number): Promise<User> => { ... };
+// NO any types allowed
+const fetchContentRequests = async (): Promise<ContentRequest[]> => {
+  // ...
+};
 ```
 
 ---
 
-## Forbidden
+## Forbidden Patterns
 
-- `print()` → use `logging`
-- Plain passwords → use bcrypt
-- Hardcoded secrets → use env vars
+### Backend
+- `print()` → use `logging` module
+- Plain text passwords → use bcrypt
+- Hardcoded secrets → use environment variables
+- `SELECT *` → specify columns
+- Skipping input validation
+
+### Frontend
 - `any` type in TypeScript
 - `console.log` in production
-- Inline styles → use UI framework
+- Inline styles → use Tailwind CSS
+- Skipping error handling in async operations
 
 ---
 
-## Workflow
+## Module-Specific Rules
 
+### Content Requests
+- All content requests must belong to a user (created_by FK)
+- Status must be one of: draft, pending_review, reviewed, approved, rejected, published
+- Status transitions must follow the workflow: draft → pending_review → reviewed → approved → published
+- AI generation endpoints must be idempotent
+
+### Creative Generation
+- Every creative must be linked to a content_request_id
+- creative_type must be one of: image, video, carousel
+- Status must be one of: pending, generating, generated, designer_review, designer_replaced, approved, rejected
+- File uploads must validate type (image/video) and enforce size limits
+
+### Approval Workflow
+- Two approval levels: team_lead → manager
+- Rejection requires mandatory comments
+- All approval actions must be logged in ApprovalHistory
+- Only users with team_lead or manager role can approve
+
+### Publishing
+- All publish actions must be logged in AuditLog
+- Failed publishes must support retry with exponential backoff
+- Platform API credentials must be stored securely (env vars)
+
+---
+
+## API Conventions
+
+- All endpoints prefixed with `/api/v1/`
+- Use plural nouns for resources: `/content-requests`, `/creatives`, `/approvals`
+- Return appropriate HTTP status codes:
+  - 200: Success
+  - 201: Created
+  - 400: Bad Request
+  - 401: Unauthorized
+  - 403: Forbidden (wrong role)
+  - 404: Not Found
+  - 409: Conflict
+
+---
+
+## Authentication & RBAC
+
+### JWT Configuration
+- Access token expires: 30 minutes
+- Refresh token expires: 7 days
+- Algorithm: HS256
+
+### Roles
+| Role | Permissions |
+|------|-------------|
+| Admin | Full access, user management, system settings |
+| Manager | Final approval, view all content, publish |
+| Team Lead | First-level approval, manage team content |
+| Creator | Create/edit content requests, view own content |
+| Designer | Review/replace creatives, upload assets |
+
+---
+
+## Environment Variables
+
+```env
+# Database
+DATABASE_URL=postgresql://user:password@localhost:5432/social_bloom_ai
+
+# Auth
+SECRET_KEY=your-secret-key-change-in-production
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+
+# AI Services
+OPENAI_API_KEY=sk-...
+# or ANTHROPIC_API_KEY=sk-ant-...
+
+# Social Platform APIs
+FACEBOOK_ACCESS_TOKEN=...
+LINKEDIN_CLIENT_ID=...
+LINKEDIN_CLIENT_SECRET=...
+INSTAGRAM_ACCESS_TOKEN=...
+TWITTER_API_KEY=...
+TWITTER_API_SECRET=...
+
+# File Storage
+UPLOAD_DIR=./uploads
+MAX_UPLOAD_SIZE_MB=50
+
+# Frontend
+VITE_API_URL=http://localhost:8000
 ```
-1. Edit INITIAL.md (define product)
-2. /generate-prp INITIAL.md
-3. /execute-prp PRPs/[name]-prp.md
+
+---
+
+## Development Commands
+
+```bash
+# Backend
+cd backend
+pip install -r requirements.txt
+alembic upgrade head
+uvicorn app.main:app --reload
+
+# Frontend
+cd frontend
+npm install
+npm run dev
+
+# Docker
+docker-compose up -d
+
+# Tests
+pytest backend/tests -v
+cd frontend && npm test
+
+# Linting
+ruff check backend/
+cd frontend && npm run lint
 ```
-
----
-
-## Skills
-
-| Task | Skill |
-|------|-------|
-| API + Auth | `skills/BACKEND.md` |
-| React + UI | `skills/FRONTEND.md` |
-| Models | `skills/DATABASE.md` |
-| Tests | `skills/TESTING.md` |
-| Docker | `skills/DEPLOYMENT.md` |
-
----
-
-## Agents
-
-| Agent | Role |
-|-------|------|
-| DATABASE-AGENT | Models + migrations |
-| BACKEND-AGENT | API + auth |
-| FRONTEND-AGENT | UI + pages |
-| DEVOPS-AGENT | Docker + CI/CD |
 
 ---
 
@@ -112,12 +239,47 @@ docker-compose build
 
 ---
 
-## Environment Variables
+## Commit Message Format
 
-```env
-DATABASE_URL=postgresql://user:pass@localhost:5432/db
-SECRET_KEY=your-secret-key
-GOOGLE_CLIENT_ID=xxx
-GOOGLE_CLIENT_SECRET=xxx
-VITE_API_URL=http://localhost:8000
+```
+feat(content): add AI caption generation endpoint
+fix(approval): fix team lead approval permission check
+refactor(publish): extract platform adapter pattern
+test(creative): add upload validation tests
+docs: update API documentation
+```
+
+---
+
+## Skills Reference
+
+| Task | Skill |
+|------|-------|
+| Database models | skills/DATABASE.md |
+| API + Auth | skills/BACKEND.md |
+| React + UI | skills/FRONTEND.md |
+| Testing | skills/TESTING.md |
+| Deployment | skills/DEPLOYMENT.md |
+
+---
+
+## Agents
+
+| Agent | Role |
+|-------|------|
+| DATABASE-AGENT | Models + migrations |
+| BACKEND-AGENT | API + auth + AI integration |
+| FRONTEND-AGENT | UI + pages + components |
+| DEVOPS-AGENT | Docker + CI/CD |
+| TEST-AGENT | Unit + integration tests |
+| REVIEW-AGENT | Security + code quality |
+
+---
+
+## Workflow
+
+```
+1. Edit INITIAL.md (define product)
+2. /generate-prp INITIAL.md
+3. /execute-prp PRPs/social-bloom-ai-prp.md
 ```
