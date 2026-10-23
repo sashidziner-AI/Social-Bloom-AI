@@ -16,6 +16,7 @@ class CreativeUpdate(BaseModel):
 
 class CreativeStatusUpdate(BaseModel):
     status: str
+    comments: str | None = None
 
 
 class UploadReplacement(BaseModel):

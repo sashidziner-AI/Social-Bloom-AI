@@ -1,5 +1,5 @@
 import api from './api';
-import type { PublishJob } from '../types';
+import type { PublishJob, PublishTarget, LinkedInOrganization } from '../types';
 
 interface ListParams {
   platform?: string;
@@ -20,6 +20,8 @@ interface CreateData {
   creative_id?: number;
   platform: string;
   scheduled_at?: string;
+  publish_target?: PublishTarget;
+  target_org_ids?: number[];
 }
 
 export const publishService = {
@@ -38,6 +40,12 @@ export const publishService = {
   retry: (id: number) =>
     api.post<PublishJob>(`/publish/${id}/retry`),
 
+  execute: (id: number) =>
+    api.post<PublishJob>(`/publish/${id}/execute`),
+
   calendar: (start_date: string, end_date: string) =>
     api.get<PublishJob[]>('/publish/calendar', { params: { start_date, end_date } }),
+
+  getLinkedInOrganizations: () =>
+    api.get<{ items: LinkedInOrganization[]; missing_scopes: string[]; has_org_access: boolean }>('/publish/linkedin/organizations'),
 };

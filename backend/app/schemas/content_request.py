@@ -10,6 +10,7 @@ class ContentRequestCreate(BaseModel):
     target_audience: str | None = None
     topic: str
     keywords: list[str] = []
+    company_id: int | None = None
 
 
 class ContentRequestUpdate(BaseModel):
@@ -40,6 +41,7 @@ class ContentRequestResponse(BaseModel):
     generated_description: str | None
     generated_hashtags: list[str]
     status: str
+    company_id: int | None
     created_by: int
     assigned_to: int | None
     created_at: datetime

@@ -36,6 +36,7 @@ Thumbs.db
 
 # Project
 uploads/
+.playwright-mcp/
 *.log
 .pytest_cache/
 htmlcov/

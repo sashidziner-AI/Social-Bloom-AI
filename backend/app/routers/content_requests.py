@@ -89,7 +89,9 @@ async def delete(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
-    content_request_service.delete_content_request(db, content_id, current_user.id)
+    content_request_service.delete_content_request(
+        db, content_id, current_user.id, current_user.role.value
+    )
 
 
 @router.post("/{content_id}/generate", response_model=ContentRequestResponse)

@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -19,6 +20,35 @@ from app.services import audit_service
 
 logger = logging.getLogger(__name__)
 
+# Matches the frontend's getBaseTitle() so sibling CRs are identified the same way
+_PLATFORM_SUFFIX_RE = re.compile(r"\s*\((Facebook|LinkedIn|Instagram|Twitter/X|Twitter)\)\s*$", re.IGNORECASE)
+
+
+def _base_title(title: str) -> str:
+    return _PLATFORM_SUFFIX_RE.sub("", title or "").strip()
+
+
+def _sibling_content_requests(db: Session, content_id: int) -> list[ContentRequest]:
+    """Return every ContentRequest that belongs to the same poster group.
+
+    Mirrors the frontend grouping key: (baseTitle, topic, tone, created_by).
+    The list always includes the original content (if found).
+    """
+    origin = db.query(ContentRequest).filter(ContentRequest.id == content_id).first()
+    if not origin:
+        return []
+    base = _base_title(origin.title)
+    candidates = (
+        db.query(ContentRequest)
+        .filter(
+            ContentRequest.topic == origin.topic,
+            ContentRequest.tone == origin.tone,
+            ContentRequest.created_by == origin.created_by,
+        )
+        .all()
+    )
+    return [c for c in candidates if _base_title(c.title) == base]
+
 
 def _sync_content_status(db: Session, approval: Approval, new_status: ContentStatus) -> None:
     """Update the linked content request status when an approval decision is made."""
@@ -35,6 +65,12 @@ def _sync_content_status(db: Session, approval: Approval, new_status: ContentSta
 def submit_for_approval(
     db: Session, entity_type: str, entity_id: int, user_id: int
 ) -> Approval:
+    """Submit a content_request (or other entity) for first-level approval.
+
+    For content_requests, the same poster usually has multiple platform-specific
+    siblings (one CR per platform). We submit ALL siblings together so a single
+    approval decision flows across every platform variant.
+    """
     EntityType(entity_type)
 
     existing = (
@@ -49,32 +85,63 @@ def submit_for_approval(
     if existing:
         raise BadRequestError("Item already has a pending approval")
 
-    approval = Approval(
-        entity_type=EntityType(entity_type),
-        entity_id=entity_id,
-        approval_level=ApprovalLevel.team_lead,
-        status=ApprovalStatus.pending,
-    )
-    db.add(approval)
-    db.flush()
+    # Determine the set of entities to submit. For non-content_request, just self.
+    if entity_type == EntityType.content_request.value:
+        siblings = _sibling_content_requests(db, entity_id) or []
+        sibling_ids = [c.id for c in siblings] or [entity_id]
+        # Skip siblings that already have a pending approval so we don't violate
+        # the "one pending approval per entity" invariant.
+        sibling_ids = [
+            sid for sid in sibling_ids
+            if not db.query(Approval).filter(
+                Approval.entity_type == EntityType.content_request,
+                Approval.entity_id == sid,
+                Approval.status == ApprovalStatus.pending,
+            ).first()
+        ]
+    else:
+        sibling_ids = [entity_id]
 
-    # Set content status to pending_review
-    _sync_content_status(db, approval, ContentStatus.pending_review)
+    primary_approval: Approval | None = None
+    for sid in sibling_ids:
+        approval = Approval(
+            entity_type=EntityType(entity_type),
+            entity_id=sid,
+            approval_level=ApprovalLevel.team_lead,
+            status=ApprovalStatus.pending,
+        )
+        db.add(approval)
+        db.flush()
+        _sync_content_status(db, approval, ContentStatus.pending_review)
+        db.add(ApprovalHistory(
+            approval_id=approval.id,
+            action=ApprovalAction.submitted,
+            actor_id=user_id,
+        ))
+        if sid == entity_id:
+            primary_approval = approval
 
-    history = ApprovalHistory(
-        approval_id=approval.id,
-        action=ApprovalAction.submitted,
-        actor_id=user_id,
-    )
-    db.add(history)
     db.commit()
-    db.refresh(approval)
+    if primary_approval is None:
+        # Shouldn't happen, but guard anyway
+        primary_approval = (
+            db.query(Approval)
+            .filter(Approval.entity_id == entity_id, Approval.entity_type == EntityType(entity_type))
+            .order_by(Approval.id.desc())
+            .first()
+        )
+    db.refresh(primary_approval)
 
     audit_service.log_action(
-        db, entity_type, entity_id, "submitted_for_approval", user_id
+        db, entity_type, entity_id, "submitted_for_approval", user_id,
+        details={"sibling_ids": sibling_ids},
     )
-    logger.info("Submitted %s/%d for approval", entity_type, entity_id)
-    return approval
+    logger.info(
+        "Submitted %s for approval (siblings=%s)",
+        entity_type,
+        sibling_ids,
+    )
+    return primary_approval
 
 
 def get_approval(db: Session, approval_id: int) -> Approval:
@@ -159,10 +226,69 @@ def _find_designer(db: Session) -> User | None:
     return least_loaded
 
 
-def _auto_generate_creative(db: Session, content_request_id: int, approver_id: int) -> None:
-    """Auto-create a creative, generate AI image synchronously, and assign to a designer."""
+def _generate_image_in_background(
+    creative_id: int,
+    prompt: str,
+    brand_colors: dict | None,
+    ph_color: str,
+    title_text: str,
+    approver_id: int,
+    content_request_id: int,
+    designer_id: int | None,
+) -> None:
+    """Run AI image generation in a background thread with its own DB session."""
+    import threading
+    from app.database import SessionLocal
     from app.services.ai.gemini_service import generate_image
-    from app.services.creative_service import _build_image_prompt
+
+    def _run():
+        db2 = SessionLocal()
+        try:
+            creative = db2.query(Creative).filter(Creative.id == creative_id).first()
+            if not creative:
+                logger.error("Background gen: creative %d not found", creative_id)
+                return
+
+            try:
+                image_url = generate_image(prompt=prompt, brand_colors=brand_colors)
+                if image_url:
+                    creative.ai_generated_url = image_url
+                    creative.status = CreativeStatus.generated
+                    logger.info("Background: AI image generated for creative %d: %s", creative_id, image_url)
+                else:
+                    creative.ai_generated_url = (
+                        f"https://placehold.co/1080x1080/{ph_color}/FFFFFF"
+                        f"?text={title_text}"
+                    )
+                    creative.status = CreativeStatus.generated
+                    logger.warning("Background: placeholder for creative %d", creative_id)
+            except Exception as e:
+                logger.error("Background: image generation failed for creative %d: %s", creative_id, e)
+                creative.ai_generated_url = (
+                    f"https://placehold.co/1080x1080/{ph_color}/FFFFFF"
+                    f"?text={title_text}"
+                )
+                creative.status = CreativeStatus.generated
+
+            audit_service.log_action(
+                db2, "creative", creative_id,
+                "auto_created_on_manager_approval", approver_id,
+                details={"content_request_id": content_request_id, "assigned_to": designer_id},
+            )
+            db2.commit()
+        except Exception as e:
+            logger.error("Background creative generation thread failed: %s", e)
+            db2.rollback()
+        finally:
+            db2.close()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+
+def _auto_generate_creative(db: Session, content_request_id: int, approver_id: int) -> None:
+    """Auto-create a creative record immediately, then generate the AI image in background."""
+    from app.services.creative_service import _build_image_prompt, _extract_brand_colors
 
     content = (
         db.query(ContentRequest)
@@ -173,7 +299,21 @@ def _auto_generate_creative(db: Session, content_request_id: int, approver_id: i
         logger.error("Content request %d not found for auto creative generation", content_request_id)
         return
 
+    # Skip if a creative already exists for this content request to avoid duplicates
+    existing = (
+        db.query(Creative)
+        .filter(Creative.content_request_id == content_request_id)
+        .first()
+    )
+    if existing:
+        logger.info(
+            "Creative already exists (%d) for content %d — skipping auto-generation",
+            existing.id, content_request_id,
+        )
+        return
+
     designer = _find_designer(db)
+    ph_color = "6B21A8"
 
     creative = Creative(
         content_request_id=content_request_id,
@@ -184,78 +324,98 @@ def _auto_generate_creative(db: Session, content_request_id: int, approver_id: i
         assigned_to=designer.id if designer else None,
     )
     db.add(creative)
-    db.flush()
 
+    # Explicitly set the relationship so helpers can read it without a lazy-load race
+    creative.content_request = content
+
+    db.flush()
     creative_id = creative.id
+
+    # Build prompt and extract brand colors while content is still in-session
+    brand_colors = _extract_brand_colors(creative)
+    prompt = _build_image_prompt(creative)
+    creative.prompt = prompt
+
+    if brand_colors:
+        ph_color = brand_colors['primary_color'].lstrip('#')
+
+    title_text = content.title[:20].replace(' ', '+')
+
     logger.info(
-        "Auto-created creative %d for content %d, assigned to designer %s",
+        "Auto-created creative %d for content %d (background generation starting), assigned to %s",
         creative_id, content_request_id,
         designer.email if designer else "none",
     )
 
-    # Build prompt from all content fields
-    prompt = _build_image_prompt(creative)
-    creative.prompt = prompt
-
-    # Generate image synchronously — try API, fallback to placeholder immediately
-    try:
-        image_url = generate_image(prompt=prompt)
-        if image_url:
-            creative.ai_generated_url = image_url
-            creative.status = CreativeStatus.generated
-            logger.info("AI image generated for creative %d: %s", creative_id, image_url)
-        else:
-            creative.ai_generated_url = f"https://placehold.co/1080x1080/6B21A8/FFFFFF?text={content.title[:20].replace(' ', '+')}"
-            creative.status = CreativeStatus.generated
-            logger.warning("Using placeholder for creative %d", creative_id)
-    except Exception as e:
-        logger.error("Image generation failed for creative %d: %s", creative_id, e)
-        creative.ai_generated_url = f"https://placehold.co/1080x1080/6B21A8/FFFFFF?text={content.title[:20].replace(' ', '+')}"
-        creative.status = CreativeStatus.generated
-
-    audit_service.log_action(
-        db, "creative", creative_id,
-        "auto_created_on_manager_approval", approver_id,
-        details={"content_request_id": content_request_id, "assigned_to": designer.id if designer else None},
+    # Launch image generation in background — approval endpoint returns immediately
+    _generate_image_in_background(
+        creative_id=creative_id,
+        prompt=prompt,
+        brand_colors=brand_colors,
+        ph_color=ph_color,
+        title_text=title_text,
+        approver_id=approver_id,
+        content_request_id=content_request_id,
+        designer_id=designer.id if designer else None,
     )
 
 
 def approve(
     db: Session, approval_id: int, user: User, comments: str | None = None
 ) -> Approval:
+    """Approve an approval — for content_requests this also approves every
+    sibling platform variant's approval at the same level, in lockstep.
+    """
     approval = get_approval(db, approval_id)
     if approval.status != ApprovalStatus.pending:
         raise BadRequestError("Approval is not pending")
     _validate_reviewer_role(user, approval)
 
-    approval.status = ApprovalStatus.approved
-    approval.reviewer_id = user.id
-    approval.comments = comments
-    approval.decided_at = datetime.now(timezone.utc)
-
-    history = ApprovalHistory(
-        approval_id=approval.id,
-        action=ApprovalAction.approved,
-        actor_id=user.id,
-        comments=comments,
-    )
-    db.add(history)
-
-    # Auto-escalate: if team_lead approved, create manager-level approval
-    if approval.approval_level == ApprovalLevel.team_lead:
-        _sync_content_status(db, approval, ContentStatus.reviewed)
-        manager_approval = Approval(
-            entity_type=approval.entity_type,
-            entity_id=approval.entity_id,
-            approval_level=ApprovalLevel.manager,
-            status=ApprovalStatus.pending,
+    # Collect the full set of pending sibling approvals at this level.
+    if approval.entity_type == EntityType.content_request:
+        sibling_cr_ids = [c.id for c in _sibling_content_requests(db, approval.entity_id)]
+        if not sibling_cr_ids:
+            sibling_cr_ids = [approval.entity_id]
+        approvals_to_decide = (
+            db.query(Approval)
+            .filter(
+                Approval.entity_type == EntityType.content_request,
+                Approval.entity_id.in_(sibling_cr_ids),
+                Approval.approval_level == approval.approval_level,
+                Approval.status == ApprovalStatus.pending,
+            )
+            .all()
         )
-        db.add(manager_approval)
-    elif approval.approval_level == ApprovalLevel.manager:
-        # Manager approved → auto-generate creative and assign to designer
-        _sync_content_status(db, approval, ContentStatus.designer_review)
-        if approval.entity_type == EntityType.content_request:
-            _auto_generate_creative(db, approval.entity_id, user.id)
+        if approval not in approvals_to_decide:
+            approvals_to_decide.append(approval)
+    else:
+        approvals_to_decide = [approval]
+
+    now = datetime.now(timezone.utc)
+    for a in approvals_to_decide:
+        a.status = ApprovalStatus.approved
+        a.reviewer_id = user.id
+        a.comments = comments
+        a.decided_at = now
+        db.add(ApprovalHistory(
+            approval_id=a.id,
+            action=ApprovalAction.approved,
+            actor_id=user.id,
+            comments=comments,
+        ))
+
+        if a.approval_level == ApprovalLevel.team_lead:
+            _sync_content_status(db, a, ContentStatus.reviewed)
+            db.add(Approval(
+                entity_type=a.entity_type,
+                entity_id=a.entity_id,
+                approval_level=ApprovalLevel.manager,
+                status=ApprovalStatus.pending,
+            ))
+        elif a.approval_level == ApprovalLevel.manager:
+            _sync_content_status(db, a, ContentStatus.designer_review)
+            if a.entity_type == EntityType.content_request:
+                _auto_generate_creative(db, a.entity_id, user.id)
 
     db.commit()
     db.refresh(approval)
@@ -266,6 +426,14 @@ def approve(
         approval.entity_id,
         f"approved_by_{approval.approval_level.value}",
         user.id,
+        details={"sibling_approval_ids": [a.id for a in approvals_to_decide]},
+    )
+    logger.info(
+        "Approved %s/%s level=%s siblings=%s",
+        approval.entity_type.value,
+        approval.entity_id,
+        approval.approval_level.value,
+        [a.id for a in approvals_to_decide],
     )
     return approval
 
@@ -366,6 +534,8 @@ def get_pending_approval(
 
 
 def get_history(db: Session, entity_type: str, entity_id: int) -> list[ApprovalHistory]:
+    from sqlalchemy.orm import joinedload
+
     approvals = (
         db.query(Approval)
         .filter(
@@ -377,6 +547,7 @@ def get_history(db: Session, entity_type: str, entity_id: int) -> list[ApprovalH
     approval_ids = [a.id for a in approvals]
     return (
         db.query(ApprovalHistory)
+        .options(joinedload(ApprovalHistory.actor))
         .filter(ApprovalHistory.approval_id.in_(approval_ids))
         .order_by(ApprovalHistory.created_at.asc())
         .all()

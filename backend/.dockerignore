@@ -1,7 +1,13 @@
 __pycache__
 *.pyc
+*.pyo
 .env
+.pytest_cache
+.git
 .venv
 venv
+*.egg-info
+.mypy_cache
+.ruff_cache
+uploads/
 tests/
-.pytest_cache

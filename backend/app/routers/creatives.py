@@ -155,7 +155,8 @@ async def change_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> CreativeResponse:
+    logger.info("Creative %d status change: status=%s, comments=%s", creative_id, data.status, data.comments)
     creative = creative_service.update_status(
-        db, creative_id, data.status, current_user.id
+        db, creative_id, data.status, current_user.id, data.comments
     )
     return CreativeResponse.model_validate(creative)

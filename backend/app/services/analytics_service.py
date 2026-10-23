@@ -1,10 +1,10 @@
 import logging
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.analytics import Analytics
-from app.models.approval import Approval, ApprovalLevel, ApprovalStatus
+from app.models.approval import Approval, ApprovalHistory, ApprovalLevel, ApprovalStatus, EntityType as ApprovalEntityType
 from app.models.content_request import ContentRequest, ContentStatus, Platform
 from app.models.creative import Creative, CreativeStatus
 from app.models.publish_job import PublishJob, PublishStatus
@@ -78,22 +78,74 @@ def get_dashboard_stats(db: Session, user: User) -> dict:
         stats["pending_approvals"] = db.query(Approval).filter(Approval.status == ApprovalStatus.pending).count()
         stats["published"] = db.query(ContentRequest).filter(ContentRequest.status == ContentStatus.published).count()
 
-    # Recent activity: last 5 content requests visible to this user
-    recent_query = db.query(ContentRequest).order_by(ContentRequest.updated_at.desc())
+    # Recent activity: last 10 content requests visible to this user
+    # Use coalesce(updated_at, created_at) so new items always appear
+    last_changed = func.coalesce(ContentRequest.updated_at, ContentRequest.created_at)
+
+    recent_query = db.query(ContentRequest).order_by(last_changed.desc())
     if role == UserRole.creator:
         recent_query = recent_query.filter(ContentRequest.created_by == user.id)
-    recent = recent_query.limit(5).all()
+    elif role == UserRole.designer:
+        # Designers see content that has creatives assigned to them
+        designer_content_ids = (
+            db.query(Creative.content_request_id)
+            .filter(Creative.assigned_to == user.id)
+            .distinct()
+        )
+        recent_query = recent_query.filter(ContentRequest.id.in_(designer_content_ids))
+    recent = recent_query.limit(10).all()
 
-    stats["recent_activity"] = [
-        {
+    # Also fetch the latest approval history entry per content request for richer context
+    recent_ids = [cr.id for cr in recent]
+    # Get latest approval history per content request
+    latest_actions: dict[int, dict] = {}
+    if recent_ids:
+        approvals = (
+            db.query(Approval)
+            .filter(
+                Approval.entity_type == ApprovalEntityType.content_request,
+                Approval.entity_id.in_(recent_ids),
+            )
+            .all()
+        )
+        approval_ids = [a.id for a in approvals]
+        approval_to_entity = {a.id: a.entity_id for a in approvals}
+
+        if approval_ids:
+            history_entries = (
+                db.query(ApprovalHistory)
+                .options(joinedload(ApprovalHistory.actor))
+                .filter(ApprovalHistory.approval_id.in_(approval_ids))
+                .order_by(ApprovalHistory.created_at.desc())
+                .all()
+            )
+            for h in history_entries:
+                entity_id = approval_to_entity.get(h.approval_id)
+                if entity_id and entity_id not in latest_actions:
+                    latest_actions[entity_id] = {
+                        "action": h.action.value,
+                        "actor_name": h.actor.full_name if h.actor else None,
+                        "actor_role": h.actor.role.value if h.actor and h.actor.role else None,
+                        "action_at": h.created_at.isoformat() if h.created_at else None,
+                    }
+
+    stats["recent_activity"] = []
+    for cr in recent:
+        entry: dict = {
             "id": cr.id,
             "title": cr.title,
             "status": cr.status.value,
             "platform": cr.platform.value,
-            "updated_at": cr.updated_at.isoformat() if cr.updated_at else cr.created_at.isoformat(),
+            "updated_at": (cr.updated_at or cr.created_at).isoformat() if (cr.updated_at or cr.created_at) else None,
+            "created_at": cr.created_at.isoformat() if cr.created_at else None,
         }
-        for cr in recent
-    ]
+        action_info = latest_actions.get(cr.id)
+        if action_info:
+            entry["last_action"] = action_info["action"]
+            entry["last_action_by"] = action_info["actor_name"]
+            entry["last_action_role"] = action_info["actor_role"]
+            entry["last_action_at"] = action_info["action_at"]
+        stats["recent_activity"].append(entry)
 
     return stats
 

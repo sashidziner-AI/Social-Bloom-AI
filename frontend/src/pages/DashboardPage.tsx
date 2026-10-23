@@ -92,6 +92,11 @@ interface RecentItem {
   status: string;
   platform: string;
   updated_at: string;
+  created_at: string;
+  last_action?: string;
+  last_action_by?: string;
+  last_action_role?: string;
+  last_action_at?: string;
 }
 
 export function DashboardPage() {
@@ -106,7 +111,7 @@ export function DashboardPage() {
     <PageWrapper>
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">
+          <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-500 bg-clip-text text-transparent">
             Welcome back, {user?.full_name || 'User'}
           </h1>
           <p className="text-gray-500 mt-1">{roleDescriptions[role] || "Here's your dashboard"}</p>
@@ -156,42 +161,100 @@ export function DashboardPage() {
             {/* Recent Activity */}
             <div>
               <h3 className="font-semibold text-gray-900 mb-3">Recent Activity</h3>
-              <DataTable
-                columns={[
-                  {
-                    key: 'title',
-                    header: 'Title',
-                    render: (item: RecentItem) => (
-                      <Link to={`/posters/${item.id}`} className="text-purple-600 hover:underline font-medium">
-                        {item.title}
-                      </Link>
-                    ),
-                  },
-                  {
-                    key: 'platform',
-                    header: 'Platform',
-                    render: (item: RecentItem) => (
-                      <span className="flex items-center gap-1.5 capitalize">
-                        <PlatformIcon platform={item.platform} size={16} />
-                        {item.platform}
-                      </span>
-                    ),
-                  },
-                  {
-                    key: 'status',
-                    header: 'Status',
-                    render: (item: RecentItem) => <StatusBadge status={item.status} />,
-                  },
-                  {
-                    key: 'date',
-                    header: 'Updated',
-                    render: (item: RecentItem) => new Date(item.updated_at).toLocaleDateString(),
-                  },
-                ]}
-                data={recent}
-                keyExtractor={(item) => item.id}
-                emptyMessage="No recent activity yet."
-              />
+              <GlassCard>
+                {recent.filter((item) => item.platform !== 'twitter').length === 0 ? (
+                  <p className="text-center text-gray-400 py-6">No recent activity yet.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-gray-200">
+                          <th className="text-left py-2.5 px-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Title</th>
+                          <th className="text-left py-2.5 px-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Platform</th>
+                          <th className="text-left py-2.5 px-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Last Action</th>
+                          <th className="text-left py-2.5 px-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                          <th className="text-right py-2.5 px-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Updated</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {recent.filter((item) => item.platform !== 'twitter').map((item, idx) => {
+                          const actionLabels: Record<string, { label: string; color: string }> = {
+                            submitted: { label: 'Submitted', color: 'text-blue-600 bg-blue-50' },
+                            approved: { label: 'Approved', color: 'text-green-600 bg-green-50' },
+                            rejected: { label: 'Rejected', color: 'text-red-600 bg-red-50' },
+                            revision_requested: { label: 'Revision', color: 'text-amber-600 bg-amber-50' },
+                          };
+                          const actionInfo = item.last_action ? actionLabels[item.last_action] : null;
+
+                          const roleColors: Record<string, string> = {
+                            admin: 'text-red-600',
+                            manager: 'text-purple-600',
+                            team_lead: 'text-indigo-600',
+                            creator: 'text-cyan-600',
+                            designer: 'text-pink-600',
+                          };
+
+                          const timeAgo = (() => {
+                            const ts = item.last_action_at || item.updated_at || item.created_at;
+                            if (!ts) return '';
+                            const diff = Date.now() - new Date(ts).getTime();
+                            const mins = Math.floor(diff / 60000);
+                            if (mins < 1) return 'Just now';
+                            if (mins < 60) return `${mins}m ago`;
+                            const hrs = Math.floor(mins / 60);
+                            if (hrs < 24) return `${hrs}h ago`;
+                            const days = Math.floor(hrs / 24);
+                            if (days < 7) return `${days}d ago`;
+                            return new Date(ts).toLocaleDateString();
+                          })();
+
+                          return (
+                            <motion.tr
+                              key={item.id}
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              transition={{ delay: idx * 0.03 }}
+                              className="border-b border-gray-100 last:border-0 hover:bg-gray-50/50 transition-colors"
+                            >
+                              <td className="py-2.5 px-3">
+                                <Link to={`/posters/${item.id}`} className="text-sm font-medium text-purple-600 hover:underline truncate block max-w-[250px]">
+                                  {item.title}
+                                </Link>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className="flex items-center gap-1.5 text-sm text-gray-700 capitalize">
+                                  <PlatformIcon platform={item.platform} size={15} />
+                                  {item.platform}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                {item.last_action_by && actionInfo ? (
+                                  <div className="text-xs">
+                                    <span className={`font-medium ${item.last_action_role ? roleColors[item.last_action_role] || 'text-gray-700' : 'text-gray-700'}`}>
+                                      {item.last_action_by}
+                                    </span>
+                                    <span className={`ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium ${actionInfo.color}`}>
+                                      {actionInfo.label}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <span className="text-xs text-gray-400">—</span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <StatusBadge status={item.status} />
+                              </td>
+                              <td className="py-2.5 px-3 text-right">
+                                <span className="text-xs text-gray-400">{timeAgo}</span>
+                              </td>
+                            </motion.tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </GlassCard>
             </div>
           </>
         )}

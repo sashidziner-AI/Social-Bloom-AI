@@ -7,12 +7,37 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
-from app.schemas.publish import PublishJobCreate, PublishJobListResponse, PublishJobResponse
+from app.schemas.publish import (
+    LinkedInOrgsListResponse,
+    PublishJobCreate,
+    PublishJobListResponse,
+    PublishJobResponse,
+)
 from app.services import publish_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/publish", tags=["publishing"])
+
+
+@router.get("/linkedin/organizations", response_model=LinkedInOrgsListResponse)
+async def linkedin_organizations(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> LinkedInOrgsListResponse:
+    """Fetch LinkedIn company pages where the connected account has admin access."""
+    from app.services.linkedin_org_service import check_token_scopes, refresh_orgs_if_stale
+
+    scope_info = await check_token_scopes()
+    orgs = await refresh_orgs_if_stale(db)
+    return LinkedInOrgsListResponse(
+        items=[
+            {"org_id": o.org_id, "name": o.name, "logo_url": o.logo_url}
+            for o in orgs
+        ],
+        missing_scopes=scope_info.get("missing_org_scopes", []),
+        has_org_access=scope_info.get("has_org_access", False),
+    )
 
 
 @router.post("/", response_model=PublishJobResponse, status_code=status.HTTP_201_CREATED)
@@ -23,7 +48,9 @@ async def create(
 ) -> PublishJobResponse:
     job = publish_service.create_publish_job(
         db, data.content_request_id, data.creative_id,
-        data.platform, data.scheduled_at, current_user.id
+        data.platform, data.scheduled_at, current_user.id,
+        publish_target=data.publish_target,
+        target_org_ids=data.target_org_ids,
     )
     return PublishJobResponse.model_validate(job)
 

@@ -72,7 +72,7 @@ export function AnalyticsPage() {
     <PageWrapper>
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
+          <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-500 bg-clip-text text-transparent">Analytics</h1>
           <p className="text-gray-500 mt-1">Content performance and engagement metrics</p>
         </div>
 

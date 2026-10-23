@@ -1,6 +1,6 @@
 import enum
 
-from sqlalchemy import Column, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, Enum, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy import DateTime
 from sqlalchemy.orm import relationship
 
@@ -15,6 +15,12 @@ class PublishStatus(enum.Enum):
     published = "published"
     failed = "failed"
     cancelled = "cancelled"
+
+
+class PublishTarget(enum.Enum):
+    profile = "profile"
+    company_page = "company_page"
+    both = "both"
 
 
 class PublishJob(Base, TimestampMixin):
@@ -43,6 +49,10 @@ class PublishJob(Base, TimestampMixin):
     platform_post_url = Column(String(500), nullable=True)
     error_message = Column(Text, nullable=True)
     retry_count = Column(Integer, default=0)
+    publish_target = Column(
+        Enum(PublishTarget), default=PublishTarget.profile, nullable=False
+    )
+    target_org_ids = Column(JSON, nullable=True)
     created_by = Column(
         Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )

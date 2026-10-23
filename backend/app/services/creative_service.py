@@ -1,4 +1,5 @@
 import logging
+import threading
 
 from sqlalchemy.orm import Session
 
@@ -88,6 +89,19 @@ def delete_creative(db: Session, creative_id: int, user_id: int) -> None:
     logger.info("Creative deleted: %d", creative_id)
 
 
+def _extract_brand_colors(creative: Creative) -> dict[str, str] | None:
+    """Extract brand color + logo dict from the creative's linked company, or None."""
+    cr = creative.content_request
+    if not cr or not cr.company:
+        return None
+    return {
+        "primary_color": cr.company.primary_color,
+        "secondary_color": cr.company.secondary_color,
+        "company_name": cr.company.name,
+        "logo_url": cr.company.logo_url or "",
+    }
+
+
 def _build_image_prompt(creative: Creative) -> str:
     """Build a structured image generation prompt from all content request fields.
 
@@ -103,51 +117,82 @@ def _build_image_prompt(creative: Creative) -> str:
     platform = cr.platform.value if hasattr(cr.platform, "value") else cr.platform
     tone = cr.tone.value if hasattr(cr.tone, "value") else cr.tone
 
+    brand_colors = _extract_brand_colors(creative)
+
+    # Intentionally skip caption / description / hashtags: those are POST text
+    # (often containing "#linkedin" etc.), which makes the image model render
+    # platform-style typography and logos. Image prompt uses visual cues only.
     return build_social_media_image_prompt(
         title=cr.title,
         topic=cr.topic,
         platform=platform,
         tone=tone,
         target_audience=cr.target_audience,
-        caption=cr.generated_caption,
-        description=cr.generated_description,
+        caption=None,
+        description=None,
         keywords=cr.keywords,
-        hashtags=cr.generated_hashtags,
+        hashtags=None,
+        brand_colors=brand_colors,
     )
 
 
-def generate_creative(db: Session, creative_id: int, user_id: int) -> Creative:
+def _generate_creative_background(
+    creative_id: int,
+    prompt: str,
+    brand_colors: dict | None,
+    ph_color: str,
+) -> None:
+    """Run image generation in a background thread with its own DB session."""
+    import threading
+    from app.database import SessionLocal
     from app.services.ai.gemini_service import generate_image
 
+    def _run():
+        db = SessionLocal()
+        try:
+            creative = db.query(Creative).filter(Creative.id == creative_id).first()
+            if not creative:
+                return
+            try:
+                image_url = generate_image(prompt=prompt, brand_colors=brand_colors)
+                if image_url:
+                    creative.ai_generated_url = image_url
+                    logger.info("BG: AI image generated for creative %d: %s", creative_id, image_url)
+                else:
+                    creative.ai_generated_url = f"https://placehold.co/1080x1080/{ph_color}/white?text=AI+Creative+{creative_id}"
+                    logger.warning("BG: placeholder for creative %d", creative_id)
+            except Exception as e:
+                logger.error("BG: image generation failed for creative %d: %s", creative_id, e)
+                creative.ai_generated_url = f"https://placehold.co/1080x1080/{ph_color}/white?text=AI+Creative+{creative_id}"
+            creative.status = CreativeStatus.generated
+            db.commit()
+        except Exception as e:
+            logger.error("BG thread error for creative %d: %s", creative_id, e)
+            db.rollback()
+        finally:
+            db.close()
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def generate_creative(db: Session, creative_id: int, user_id: int) -> Creative:
     creative = get_creative(db, creative_id)
-    creative.status = CreativeStatus.generating
-    db.commit()
 
-    # Build a rich prompt from ALL content request fields
+    # Build prompt and extract brand colors while relationships are loaded
+    brand_colors = _extract_brand_colors(creative)
     prompt = _build_image_prompt(creative)
+    ph_color = brand_colors['primary_color'].lstrip('#') if brand_colors else "6B21A8"
 
-    # Update the creative's prompt field so the designer can see what was used
+    # Reset to generating state and save prompt
+    creative.status = CreativeStatus.generating
     creative.prompt = prompt
-    db.commit()
-
-    try:
-        image_url = generate_image(prompt=prompt)
-
-        if image_url:
-            creative.ai_generated_url = image_url
-            creative.status = CreativeStatus.generated
-            logger.info("Gemini AI image generated for creative %d: %s", creative_id, image_url)
-        else:
-            creative.ai_generated_url = f"https://placehold.co/1080x1080/purple/white?text=AI+Creative+{creative_id}"
-            creative.status = CreativeStatus.generated
-            logger.warning("Gemini returned no image, using placeholder for creative %d", creative_id)
-    except Exception as e:
-        logger.error("AI image generation failed for creative %d: %s", creative_id, e)
-        creative.ai_generated_url = f"https://placehold.co/1080x1080/purple/white?text=AI+Creative+{creative_id}"
-        creative.status = CreativeStatus.generated
-
+    creative.ai_generated_url = None
     db.commit()
     db.refresh(creative)
+
+    # Launch generation in background — endpoint returns immediately
+    _generate_creative_background(creative_id, prompt, brand_colors, ph_color)
+
     return creative
 
 
@@ -176,8 +221,10 @@ CREATIVE_TRANSITIONS: dict[str, list[str]] = {
 
 
 def update_status(
-    db: Session, creative_id: int, new_status: str, user_id: int
+    db: Session, creative_id: int, new_status: str, user_id: int, comments: str | None = None
 ) -> Creative:
+    from app.models.approval import Approval, ApprovalAction, ApprovalHistory, EntityType
+
     creative = get_creative(db, creative_id)
     current = creative.status.value
     valid = CREATIVE_TRANSITIONS.get(current, [])
@@ -189,9 +236,52 @@ def update_status(
 
     creative.status = CreativeStatus(new_status)
 
+    # Store comments in creative notes
+    if comments:
+        from app.models.user import User as UserModel
+        actor = db.query(UserModel).filter(UserModel.id == user_id).first()
+        actor_name = actor.full_name or actor.email if actor else f"User #{user_id}"
+        note_entry = f"[{new_status}] {actor_name}: {comments}"
+        existing_notes = creative.notes or ""
+        creative.notes = f"{existing_notes}\n{note_entry}".strip() if existing_notes else note_entry
+
+    # Write to ApprovalHistory so it shows in Workflow History
+    action_map = {
+        "submitted": ApprovalAction.submitted,
+        "tl_approved": ApprovalAction.approved,
+        "approved": ApprovalAction.approved,
+        "rejected": ApprovalAction.rejected,
+    }
+    action = action_map.get(new_status)
+    if action:
+        approval = (
+            db.query(Approval)
+            .filter(
+                Approval.entity_type == EntityType.content_request,
+                Approval.entity_id == creative.content_request_id,
+            )
+            .order_by(Approval.created_at.desc())
+            .first()
+        )
+        if approval:
+            label_map = {
+                "submitted": "Designer submitted creative for review",
+                "tl_approved": "Team Lead approved creative",
+                "approved": "Manager approved creative",
+                "rejected": "Creative rejected",
+            }
+            label = label_map.get(new_status, new_status)
+            full_comment = f"{label}: {comments}" if comments else label
+            history = ApprovalHistory(
+                approval_id=approval.id,
+                action=action,
+                actor_id=user_id,
+                comments=full_comment,
+            )
+            db.add(history)
+
     if new_status == "approved":
         creative.final_url = creative.designer_uploaded_url or creative.ai_generated_url
-        # Also update the content request to approved
         if creative.content_request:
             from app.models.content_request import ContentStatus
             creative.content_request.status = ContentStatus.approved
@@ -202,5 +292,5 @@ def update_status(
 
     db.commit()
     db.refresh(creative)
-    logger.info("Creative %d status: %s -> %s by user %d", creative_id, current, new_status, user_id)
+    logger.info("Creative %d status: %s -> %s by user %d (comments=%s)", creative_id, current, new_status, user_id, comments)
     return creative

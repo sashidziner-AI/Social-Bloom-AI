@@ -18,6 +18,8 @@ interface ApprovalHistory {
   approval_id: number;
   action: string;
   actor_id: number;
+  actor_name: string | null;
+  actor_role: string | null;
   comments: string | null;
   created_at: string;
 }

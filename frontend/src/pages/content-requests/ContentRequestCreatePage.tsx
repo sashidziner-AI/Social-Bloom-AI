@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Check } from 'lucide-react';
+import { Check, Building2 } from 'lucide-react';
 import { PageWrapper } from '../../components/layout/PageWrapper';
 import { PlatformIcon } from '../../components/ui/PlatformIcons';
 import { GlassCard } from '../../components/ui/GlassCard';
@@ -11,6 +11,7 @@ import { AnimatedInput } from '../../components/ui/AnimatedInput';
 import { TextArea } from '../../components/ui/TextArea';
 import { Select } from '../../components/ui/Select';
 import { useCreateContentRequest } from '../../hooks/useContentRequests';
+import { useCompanies } from '../../hooks/useCompanies';
 
 const platformOptions = [
   { value: 'facebook', label: 'Facebook' },
@@ -30,6 +31,7 @@ const toneOptions = [
 export function ContentRequestCreatePage() {
   const navigate = useNavigate();
   const createMutation = useCreateContentRequest();
+  const { data: companiesData } = useCompanies({ per_page: 100 });
 
   const [title, setTitle] = useState('');
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
@@ -37,7 +39,10 @@ export function ContentRequestCreatePage() {
   const [targetAudience, setTargetAudience] = useState('');
   const [topic, setTopic] = useState('');
   const [keywordsStr, setKeywordsStr] = useState('');
+  const [companyId, setCompanyId] = useState<string>('');
   const [error, setError] = useState('');
+
+  const selectedCompany = companiesData?.items.find((c) => c.id === Number(companyId));
 
   const togglePlatform = (value: string) => {
     setSelectedPlatforms((prev) =>
@@ -71,6 +76,7 @@ export function ContentRequestCreatePage() {
           target_audience: targetAudience || undefined,
           topic,
           keywords,
+          company_id: companyId ? Number(companyId) : undefined,
         });
       }
       navigate('/posters');
@@ -82,7 +88,7 @@ export function ContentRequestCreatePage() {
   return (
     <PageWrapper>
       <div className="max-w-2xl mx-auto">
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">
+        <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-500 bg-clip-text text-transparent mb-6">
           New Content Request
         </h1>
 
@@ -101,6 +107,61 @@ export function ContentRequestCreatePage() {
               placeholder="E.g., Product Launch Announcement"
               required
             />
+
+            {/* Company selector */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Company <span className="text-xs text-gray-400 font-normal">(brand colors will be used in image generation)</span>
+              </label>
+              <div className="space-y-2">
+                <select
+                  value={companyId}
+                  onChange={(e) => setCompanyId(e.target.value)}
+                  className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-700 focus:border-purple-400 focus:ring-2 focus:ring-purple-100 outline-none transition-all"
+                >
+                  <option value="">No company (default colors)</option>
+                  {companiesData?.items.map((company) => (
+                    <option key={company.id} value={company.id}>
+                      {company.name}
+                    </option>
+                  ))}
+                </select>
+                {selectedCompany && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="flex items-center gap-3 px-4 py-3 rounded-xl bg-gray-50 border border-gray-200"
+                  >
+                    <Building2 size={16} className="text-purple-500 shrink-0" />
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      {selectedCompany.logo_url && (
+                        <img
+                          src={selectedCompany.logo_url}
+                          alt=""
+                          className="w-6 h-6 rounded object-cover"
+                        />
+                      )}
+                      <span className="text-sm font-medium text-gray-700 truncate">
+                        {selectedCompany.name}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <div
+                        className="w-5 h-5 rounded-full border border-gray-200"
+                        style={{ backgroundColor: selectedCompany.primary_color }}
+                        title={`Primary: ${selectedCompany.primary_color}`}
+                      />
+                      <div
+                        className="w-5 h-5 rounded-full border border-gray-200"
+                        style={{ backgroundColor: selectedCompany.secondary_color }}
+                        title={`Secondary: ${selectedCompany.secondary_color}`}
+                      />
+                      <span className="text-xs text-gray-400 ml-1">{selectedCompany.font_family}</span>
+                    </div>
+                  </motion.div>
+                )}
+              </div>
+            </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">

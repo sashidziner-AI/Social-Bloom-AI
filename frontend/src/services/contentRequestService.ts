@@ -22,6 +22,7 @@ interface CreateData {
   target_audience?: string;
   topic: string;
   keywords?: string[];
+  company_id?: number;
 }
 
 interface UpdateData {

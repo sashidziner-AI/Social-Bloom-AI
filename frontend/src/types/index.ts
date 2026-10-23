@@ -28,6 +28,7 @@ export type CreativeStatus =
 export type ApprovalLevel = 'team_lead' | 'manager';
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'revision_requested';
 export type PublishStatus = 'scheduled' | 'publishing' | 'published' | 'failed' | 'cancelled';
+export type PublishTarget = 'profile' | 'company_page' | 'both';
 
 export interface ContentRequest {
   id: number;
@@ -41,6 +42,7 @@ export interface ContentRequest {
   generated_description: string | null;
   generated_hashtags: string[];
   status: ContentStatus;
+  company_id: number | null;
   created_by: number;
   assigned_to: number | null;
   created_at: string;
@@ -89,9 +91,17 @@ export interface PublishJob {
   platform_post_url: string | null;
   error_message: string | null;
   retry_count: number;
+  publish_target: PublishTarget;
+  target_org_ids: number[] | null;
   created_by: number;
   created_at: string;
   updated_at: string | null;
+}
+
+export interface LinkedInOrganization {
+  org_id: string;
+  name: string;
+  logo_url: string | null;
 }
 
 export interface Analytics {
@@ -105,6 +115,40 @@ export interface Analytics {
   comments_count: number;
   engagement_rate: number;
   fetched_at: string;
+}
+
+export interface Company {
+  id: number;
+  name: string;
+  logo_url: string | null;
+  primary_color: string;
+  secondary_color: string;
+  font_family: string;
+  created_by: number;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export type TemplatePlatform = 'linkedin' | 'instagram' | 'facebook';
+export type LogoPosition = 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right' | 'center';
+
+export interface CompanyTemplate {
+  id: number;
+  company_id: number;
+  platform: TemplatePlatform;
+  name: string;
+  width: number;
+  height: number;
+  bg_color: string | null;
+  text_color: string;
+  heading_font_size: number;
+  body_font_size: number;
+  logo_position: LogoPosition;
+  overlay_opacity: number;
+  default_cta: string | null;
+  default_hashtags: string | null;
+  created_at: string;
+  updated_at: string | null;
 }
 
 export interface AuthTokens {

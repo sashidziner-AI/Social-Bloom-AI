@@ -30,7 +30,7 @@ jobs:
       - name: Test
         run: |
           cd backend
-          pytest --cov=app --cov-fail-under=80 || true
+          pytest --cov=app --cov-fail-under=80
 
   frontend-test:
     runs-on: ubuntu-latest

@@ -17,6 +17,8 @@ class ApprovalHistoryResponse(BaseModel):
     approval_id: int
     action: str
     actor_id: int
+    actor_name: str | None = None
+    actor_role: str | None = None
     comments: str | None
     created_at: datetime
 

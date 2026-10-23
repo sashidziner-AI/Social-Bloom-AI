@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.exceptions import BadRequestError, NotFoundError
 from app.models.content_request import ContentRequest, ContentStatus, Platform
-from app.models.publish_job import PublishJob, PublishStatus
+from app.models.publish_job import PublishJob, PublishStatus, PublishTarget
 from app.services import audit_service
 
 logger = logging.getLogger(__name__)
@@ -13,7 +13,9 @@ logger = logging.getLogger(__name__)
 
 def create_publish_job(
     db: Session, content_request_id: int, creative_id: int | None,
-    platform: str, scheduled_at: datetime | None, user_id: int
+    platform: str, scheduled_at: datetime | None, user_id: int,
+    publish_target: str = "profile",
+    target_org_ids: list[int] | None = None,
 ) -> PublishJob:
     content = (
         db.query(ContentRequest)
@@ -22,7 +24,8 @@ def create_publish_job(
     )
     if not content:
         raise NotFoundError("Content request")
-    if content.status != ContentStatus.approved:
+    allowed = {ContentStatus.approved, ContentStatus.confirmed, ContentStatus.published}
+    if content.status not in allowed:
         raise BadRequestError("Content must be approved before publishing")
 
     Platform(platform)
@@ -33,6 +36,8 @@ def create_publish_job(
         platform=Platform(platform),
         scheduled_at=scheduled_at,
         status=PublishStatus.scheduled,
+        publish_target=PublishTarget(publish_target),
+        target_org_ids=target_org_ids,
         created_by=user_id,
     )
     db.add(job)
@@ -41,9 +46,14 @@ def create_publish_job(
 
     audit_service.log_action(
         db, "publish_job", job.id, "created", user_id,
-        details={"platform": platform, "content_request_id": content_request_id},
+        details={
+            "platform": platform,
+            "content_request_id": content_request_id,
+            "publish_target": publish_target,
+            "target_org_ids": target_org_ids,
+        },
     )
-    logger.info("Publish job created: %d for content %d", job.id, content_request_id)
+    logger.info("Publish job created: %d for content %d (target: %s)", job.id, content_request_id, publish_target)
     return job
 
 
@@ -127,29 +137,73 @@ async def execute_publish(db: Session, job_id: int) -> PublishJob:
     image_url = None
     if job.creative and job.creative.final_url:
         image_url = job.creative.final_url
+    elif not job.creative:
+        from app.models.creative import Creative
+        creative = (
+            db.query(Creative)
+            .filter(
+                Creative.content_request_id == content.id,
+                Creative.final_url.isnot(None),
+            )
+            .order_by(Creative.id.desc())
+            .first()
+        )
+        if creative:
+            job.creative_id = creative.id
+            image_url = creative.final_url
+            db.commit()
 
     try:
         adapter = get_adapter(job.platform.value)
-        result = await adapter.publish(
-            caption=caption,
-            description=description,
-            hashtags=hashtags,
-            image_url=image_url,
-        )
+        publish_target = job.publish_target or PublishTarget.profile
+        target_org_ids = job.target_org_ids or []
+
+        all_post_ids = []
+        all_post_urls = []
+
+        # Publish to profile
+        if publish_target in (PublishTarget.profile, PublishTarget.both):
+            result = await adapter.publish(
+                caption=caption,
+                description=description,
+                hashtags=hashtags,
+                image_url=image_url,
+            )
+            all_post_ids.append(result.post_id)
+            all_post_urls.append(result.post_url)
+            logger.info("Published to profile: %s", result.post_id)
+
+        # Publish to company page(s)
+        if publish_target in (PublishTarget.company_page, PublishTarget.both):
+            for org_id in target_org_ids:
+                author_urn = f"urn:li:organization:{org_id}"
+                result = await adapter.publish(
+                    caption=caption,
+                    description=description,
+                    hashtags=hashtags,
+                    image_url=image_url,
+                    author_urn=author_urn,
+                )
+                all_post_ids.append(result.post_id)
+                all_post_urls.append(result.post_url)
+                logger.info("Published to org %s: %s", org_id, result.post_id)
 
         job.status = PublishStatus.published
         job.published_at = datetime.now(timezone.utc)
-        job.platform_post_id = result.post_id
-        job.platform_post_url = result.post_url
+        job.platform_post_id = " | ".join(all_post_ids)
+        job.platform_post_url = all_post_urls[0] if all_post_urls else None
         job.error_message = None
         db.commit()
         db.refresh(job)
 
         audit_service.log_action(
             db, "publish_job", job.id, "published", job.created_by,
-            details={"platform_post_id": result.post_id},
+            details={
+                "platform_post_ids": all_post_ids,
+                "publish_target": publish_target.value,
+            },
         )
-        logger.info("Published job %d to %s", job.id, job.platform.value)
+        logger.info("Published job %d to %s (target: %s)", job.id, job.platform.value, publish_target.value)
 
     except Exception as e:
         job.status = PublishStatus.failed

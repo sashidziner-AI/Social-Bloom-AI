@@ -47,7 +47,7 @@ export function ProfilePage() {
     <PageWrapper>
       <div className="max-w-2xl mx-auto space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Profile</h1>
+          <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-500 bg-clip-text text-transparent">Profile</h1>
           <p className="text-gray-500 mt-1">View and manage your account</p>
         </div>
 

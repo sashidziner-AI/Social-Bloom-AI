@@ -10,6 +10,12 @@ export function useCreatives(params: {
   return useQuery({
     queryKey: ['creatives', params],
     queryFn: () => creativeService.list(params).then((r) => r.data),
+    // Poll every 3 s while any creative is still generating
+    refetchInterval: (query) => {
+      const items = query.state.data?.items;
+      if (items?.some((c: { status: string }) => c.status === 'generating')) return 3000;
+      return false;
+    },
   });
 }
 
@@ -18,6 +24,8 @@ export function useCreative(id: number) {
     queryKey: ['creative', id],
     queryFn: () => creativeService.get(id).then((r) => r.data),
     enabled: !!id,
+    refetchInterval: (query) =>
+      query.state.data?.status === 'generating' ? 3000 : false,
   });
 }
 

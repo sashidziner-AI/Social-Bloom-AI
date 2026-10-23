@@ -19,6 +19,7 @@ services:
 
   backend:
     build: ./backend
+    command: bash -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     environment:
       DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-social_bloom_ai}
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}

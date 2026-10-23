@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import {
   BarChart3,
+  Building2,
   CheckSquare,
   FileText,
   Home,
@@ -31,6 +32,11 @@ const navItems: NavItem[] = [
   { label: 'Approvals', path: '/approvals', icon: <CheckSquare size={20} /> },
   { label: 'Publishing', path: '/publish', icon: <Send size={20} /> },
   { label: 'Analytics', path: '/analytics', icon: <BarChart3 size={20} /> },
+  {
+    label: 'Companies',
+    path: '/companies',
+    icon: <Building2 size={20} />,
+  },
   {
     label: 'Admin',
     path: '/admin',

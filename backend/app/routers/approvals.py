@@ -118,4 +118,11 @@ async def get_history(
     _: User = Depends(get_current_user),
 ) -> list[ApprovalHistoryResponse]:
     history = approval_service.get_history(db, entity_type, entity_id)
-    return [ApprovalHistoryResponse.model_validate(h) for h in history]
+    result = []
+    for h in history:
+        data = ApprovalHistoryResponse.model_validate(h)
+        if h.actor:
+            data.actor_name = h.actor.full_name or h.actor.email
+            data.actor_role = h.actor.role.value if h.actor.role else None
+        result.append(data)
+    return result

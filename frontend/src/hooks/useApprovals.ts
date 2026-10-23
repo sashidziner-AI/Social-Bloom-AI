@@ -20,12 +20,21 @@ export function useApproval(id: number) {
   });
 }
 
+function invalidateApprovalRelated(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ['approvals'] });
+  qc.invalidateQueries({ queryKey: ['approval-history'] });
+  qc.invalidateQueries({ queryKey: ['pending-approval'] });
+  qc.invalidateQueries({ queryKey: ['content-requests'] });
+  qc.invalidateQueries({ queryKey: ['content-request'] });
+  qc.invalidateQueries({ queryKey: ['creatives'] });
+}
+
 export function useApproveItem() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, comments }: { id: number; comments?: string }) =>
       approvalService.approve(id, comments),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['approvals'] }),
+    onSuccess: () => invalidateApprovalRelated(qc),
   });
 }
 
@@ -34,7 +43,7 @@ export function useRejectItem() {
   return useMutation({
     mutationFn: ({ id, comments }: { id: number; comments: string }) =>
       approvalService.reject(id, comments),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['approvals'] }),
+    onSuccess: () => invalidateApprovalRelated(qc),
   });
 }
 
@@ -43,6 +52,6 @@ export function useRequestRevision() {
   return useMutation({
     mutationFn: ({ id, comments }: { id: number; comments: string }) =>
       approvalService.requestRevision(id, comments),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['approvals'] }),
+    onSuccess: () => invalidateApprovalRelated(qc),
   });
 }

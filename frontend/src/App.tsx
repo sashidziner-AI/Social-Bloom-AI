@@ -11,10 +11,18 @@ import { ContentRequestListPage } from './pages/content-requests/ContentRequestL
 import { ContentRequestCreatePage } from './pages/content-requests/ContentRequestCreatePage';
 import { ContentRequestDetailPage } from './pages/content-requests/ContentRequestDetailPage';
 import { CreativeListPage } from './pages/creatives/CreativeListPage';
+import { CreativeDetailPage } from './pages/creatives/CreativeDetailPage';
+import { CreativeReviewPage } from './pages/creatives/CreativeReviewPage';
 import { ApprovalListPage } from './pages/approvals/ApprovalListPage';
+import { ApprovalDetailPage } from './pages/approvals/ApprovalDetailPage';
 import { PublishListPage } from './pages/publish/PublishListPage';
+import { PublishDetailPage } from './pages/publish/PublishDetailPage';
+import { PublishSchedulePage } from './pages/publish/PublishSchedulePage';
 import { AnalyticsPage } from './pages/analytics/AnalyticsPage';
+import { AnalyticsContentPage } from './pages/analytics/AnalyticsContentPage';
+import { AnalyticsTeamPage } from './pages/analytics/AnalyticsTeamPage';
 import { AdminPage } from './pages/admin/AdminPage';
+import { CompanyListPage } from './pages/companies/CompanyListPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { SettingsPage } from './pages/SettingsPage';
 
@@ -63,16 +71,25 @@ export default function App() {
 
               {/* Creatives */}
               <Route path="/creatives" element={<CreativeListPage />} />
-              <Route path="/creatives/:id" element={<PlaceholderPage title="Creative Detail" />} />
+              <Route path="/creatives/:id" element={<CreativeDetailPage />} />
+              <Route path="/creatives/:id/review" element={<CreativeReviewPage />} />
 
               {/* Approvals */}
               <Route path="/approvals" element={<ApprovalListPage />} />
+              <Route path="/approvals/:id" element={<ApprovalDetailPage />} />
 
               {/* Publishing */}
               <Route path="/publish" element={<PublishListPage />} />
+              <Route path="/publish/schedule" element={<PublishSchedulePage />} />
+              <Route path="/publish/:id" element={<PublishDetailPage />} />
 
               {/* Analytics */}
               <Route path="/analytics" element={<AnalyticsPage />} />
+              <Route path="/analytics/content/:id" element={<AnalyticsContentPage />} />
+              <Route path="/analytics/team" element={<AnalyticsTeamPage />} />
+
+              {/* Companies */}
+              <Route path="/companies" element={<CompanyListPage />} />
 
               {/* Admin */}
               <Route

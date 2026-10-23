@@ -49,6 +49,6 @@ export const creativeService = {
     });
   },
 
-  updateStatus: (id: number, status: string) =>
-    api.put<Creative>(`/creatives/${id}/status`, { status }),
+  updateStatus: (id: number, status: string, comments?: string) =>
+    api.put<Creative>(`/creatives/${id}/status`, { status, comments }),
 };

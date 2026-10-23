@@ -28,6 +28,14 @@ export function useCreatePublishJob() {
   });
 }
 
+export function useExecutePublishJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: publishService.execute,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['publish-jobs'] }),
+  });
+}
+
 export function useCancelPublishJob() {
   const qc = useQueryClient();
   return useMutation({
@@ -49,5 +57,12 @@ export function usePublishCalendar(startDate: string, endDate: string) {
     queryKey: ['publish-calendar', startDate, endDate],
     queryFn: () => publishService.calendar(startDate, endDate).then((r) => r.data),
     enabled: !!startDate && !!endDate,
+  });
+}
+
+export function useLinkedInOrganizations() {
+  return useQuery({
+    queryKey: ['linkedin-organizations'],
+    queryFn: () => publishService.getLinkedInOrganizations().then((r) => r.data),
   });
 }

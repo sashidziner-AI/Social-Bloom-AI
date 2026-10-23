@@ -1,5 +1,6 @@
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,10 +12,21 @@ from app.exceptions import AppException, app_exception_handler
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from app.database import Base, engine
+    import app.models  # noqa: F401
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables created/verified")
+    yield
+
+
 app = FastAPI(
     title=settings.APP_NAME,
     version="1.0.0",
     description="AI-powered social media content lifecycle automation platform",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -34,6 +46,7 @@ from app.routers import (
     approvals,
     audit_logs,
     auth,
+    companies,
     content_requests,
     creatives,
     publish,
@@ -47,6 +60,7 @@ app.include_router(publish.router, prefix="/api/v1")
 app.include_router(audit_logs.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
 app.include_router(analytics.router, prefix="/api/v1")
+app.include_router(companies.router, prefix="/api/v1")
 
 
 # Serve uploaded files (generated images, etc.)
@@ -54,23 +68,6 @@ os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
 
-@app.on_event("startup")
-async def startup_event():
-    from app.database import Base, engine
-    import app.models.user  # noqa: F401
-    import app.models.content_request  # noqa: F401
-    import app.models.creative  # noqa: F401
-    import app.models.approval  # noqa: F401
-    import app.models.publish_job  # noqa: F401
-    import app.models.analytics  # noqa: F401
-    import app.models.audit_log  # noqa: F401
-    import app.models.refresh_token  # noqa: F401
-    import app.models.user_permission  # noqa: F401
-    import app.models.role_permission_override  # noqa: F401
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables created/verified")
-
-
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "app": settings.APP_NAME}
+    return {"status": "healthy", "app": settings.APP_NAME, "version": "1.0.0"}

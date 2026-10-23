@@ -67,7 +67,7 @@ function ApprovalCard({ approval }: { approval: Approval }) {
   const rejectMutation = useRejectItem();
   const revisionMutation = useRequestRevision();
   const [comments, setComments] = useState('');
-  const [showComments, setShowComments] = useState(false);
+  const [activeForm, setActiveForm] = useState<'approve' | 'reject' | null>(null);
 
   const isPending = approval.status === 'pending';
   const role = user?.role;
@@ -85,6 +85,44 @@ function ApprovalCard({ approval }: { approval: Approval }) {
     ) : (
       <Shield size={14} />
     );
+
+  const resetForm = () => {
+    setActiveForm(null);
+    setComments('');
+  };
+
+  const handleApprove = () => {
+    if (!comments.trim()) return;
+    approveMutation.mutate(
+      { id: approval.id, comments },
+      { onSuccess: resetForm }
+    );
+  };
+
+  const handleReject = () => {
+    if (!comments.trim()) return;
+    rejectMutation.mutate(
+      { id: approval.id, comments },
+      { onSuccess: resetForm }
+    );
+  };
+
+  const handleRevision = () => {
+    if (!comments.trim()) return;
+    revisionMutation.mutate(
+      { id: approval.id, comments },
+      { onSuccess: resetForm }
+    );
+  };
+
+  const toggleForm = (form: 'approve' | 'reject') => {
+    if (activeForm === form) {
+      resetForm();
+    } else {
+      setActiveForm(form);
+      setComments('');
+    }
+  };
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
@@ -118,7 +156,10 @@ function ApprovalCard({ approval }: { approval: Approval }) {
                 {approval.history.map((h) => (
                   <div key={h.id} className="flex items-center gap-2 text-xs text-gray-400">
                     <span className="capitalize">{h.action.replace('_', ' ')}</span>
-                    <span>by User #{h.actor_id}</span>
+                    <span>by {h.actor_name || `User #${h.actor_id}`}</span>
+                    {h.comments && (
+                      <span className="text-gray-500 italic">&mdash; &ldquo;{h.comments}&rdquo;</span>
+                    )}
                     <span>{new Date(h.created_at).toLocaleString()}</span>
                   </div>
                 ))}
@@ -148,8 +189,8 @@ function ApprovalCard({ approval }: { approval: Approval }) {
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.9 }}
-                  onClick={() => approveMutation.mutate({ id: approval.id })}
-                  className="p-2 rounded-lg bg-green-50 text-green-600 hover:bg-green-100"
+                  onClick={() => toggleForm('approve')}
+                  className={`p-2 rounded-lg ${activeForm === 'approve' ? 'bg-green-200 text-green-700' : 'bg-green-50 text-green-600 hover:bg-green-100'}`}
                   title="Approve"
                 >
                   <CheckCircle size={18} />
@@ -157,8 +198,8 @@ function ApprovalCard({ approval }: { approval: Approval }) {
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.9 }}
-                  onClick={() => setShowComments(!showComments)}
-                  className="p-2 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100"
+                  onClick={() => toggleForm('reject')}
+                  className={`p-2 rounded-lg ${activeForm === 'reject' ? 'bg-gray-200 text-gray-700' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}
                   title="Reject / Request Revision"
                 >
                   <MessageSquare size={18} />
@@ -168,23 +209,59 @@ function ApprovalCard({ approval }: { approval: Approval }) {
           </div>
         </div>
 
-        {showComments && canAct && (
-          <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
+        {activeForm === 'approve' && canAct && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            className="mt-4 space-y-3 border-t border-gray-100 pt-4"
+          >
             <TextArea
               value={comments}
               onChange={setComments}
-              placeholder="Add comments (required for rejection)..."
+              placeholder="Add feedback comment before approving (required)..."
+              rows={2}
+            />
+            <div className="flex gap-2">
+              <GradientButton
+                size="sm"
+                onClick={handleApprove}
+                isLoading={approveMutation.isPending}
+                disabled={!comments.trim()}
+              >
+                <span className="flex items-center gap-1">
+                  <CheckCircle size={14} /> Submit Approval
+                </span>
+              </GradientButton>
+              <GradientButton
+                size="sm"
+                variant="secondary"
+                onClick={resetForm}
+              >
+                Cancel
+              </GradientButton>
+            </div>
+          </motion.div>
+        )}
+
+        {activeForm === 'reject' && canAct && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            className="mt-4 space-y-3 border-t border-gray-100 pt-4"
+          >
+            <TextArea
+              value={comments}
+              onChange={setComments}
+              placeholder="Add comments (required for rejection / revision)..."
               rows={2}
             />
             <div className="flex gap-2">
               <GradientButton
                 size="sm"
                 variant="danger"
-                onClick={() => {
-                  if (comments.trim())
-                    rejectMutation.mutate({ id: approval.id, comments });
-                }}
+                onClick={handleReject}
                 isLoading={rejectMutation.isPending}
+                disabled={!comments.trim()}
               >
                 <span className="flex items-center gap-1">
                   <XCircle size={14} /> Reject
@@ -193,18 +270,16 @@ function ApprovalCard({ approval }: { approval: Approval }) {
               <GradientButton
                 size="sm"
                 variant="secondary"
-                onClick={() => {
-                  if (comments.trim())
-                    revisionMutation.mutate({ id: approval.id, comments });
-                }}
+                onClick={handleRevision}
                 isLoading={revisionMutation.isPending}
+                disabled={!comments.trim()}
               >
                 <span className="flex items-center gap-1">
                   <RotateCcw size={14} /> Request Revision
                 </span>
               </GradientButton>
             </div>
-          </div>
+          </motion.div>
         )}
       </GlassCard>
     </motion.div>
@@ -227,7 +302,7 @@ export function ApprovalListPage() {
     <PageWrapper>
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Approvals</h1>
+          <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-500 bg-clip-text text-transparent">Approvals</h1>
           <p className="text-gray-500 mt-1">
             {user?.role === 'team_lead'
               ? 'Review content submitted by requesters for first-level approval'

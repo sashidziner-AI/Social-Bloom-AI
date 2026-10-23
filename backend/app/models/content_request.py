@@ -48,6 +48,9 @@ class ContentRequest(Base, TimestampMixin):
     generated_description = Column(Text, nullable=True)
     generated_hashtags = Column(JSON, default=list)
     status = Column(Enum(ContentStatus), default=ContentStatus.draft, nullable=False)
+    company_id = Column(
+        Integer, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_by = Column(
         Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -55,6 +58,7 @@ class ContentRequest(Base, TimestampMixin):
         Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
+    company = relationship("Company", foreign_keys=[company_id])
     creator = relationship("User", foreign_keys=[created_by], back_populates="content_requests")
     assignee = relationship("User", foreign_keys=[assigned_to])
     creatives = relationship(

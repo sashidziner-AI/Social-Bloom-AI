@@ -33,6 +33,7 @@ def create_content_request(
         target_audience=data.target_audience,
         topic=data.topic,
         keywords=data.keywords,
+        company_id=data.company_id,
         created_by=user_id,
     )
     db.add(content)
@@ -100,16 +101,25 @@ def update_content_request(
     return content
 
 
-def delete_content_request(db: Session, content_id: int, user_id: int) -> None:
+def delete_content_request(
+    db: Session, content_id: int, user_id: int, user_role: str | None = None
+) -> None:
     content = get_content_request(db, content_id)
-    if content.created_by != user_id:
-        raise ForbiddenError("Only the owner can delete this content request")
-    if content.status != ContentStatus.draft:
-        raise BadRequestError("Only draft content requests can be deleted")
+    is_admin = user_role == "admin"
+    if not is_admin:
+        if content.created_by != user_id:
+            raise ForbiddenError("Only the owner can delete this content request")
+        if content.status != ContentStatus.draft:
+            raise BadRequestError("Only draft content requests can be deleted")
 
     db.delete(content)
     db.commit()
-    logger.info("Content request deleted: %d by user %d", content_id, user_id)
+    logger.info(
+        "Content request deleted: %d by user %d (admin=%s)",
+        content_id,
+        user_id,
+        is_admin,
+    )
 
 
 def update_status(

@@ -1,8 +1,11 @@
 """Seed script to create default users for each role."""
+import logging
 import sys
 import os
 
 sys.path.insert(0, os.path.dirname(__file__))
+
+logger = logging.getLogger(__name__)
 
 from app.database import SessionLocal
 from app.auth.jwt import hash_password
@@ -26,7 +29,7 @@ def seed():
         for user_data in SEED_USERS:
             existing = db.query(User).filter(User.email == user_data["email"]).first()
             if existing:
-                print(f"  Already exists: {user_data['email']}")
+                logger.info("Already exists: %s", user_data["email"])
                 continue
             user = User(
                 email=user_data["email"],
@@ -37,12 +40,13 @@ def seed():
                 is_verified=True,
             )
             db.add(user)
-            print(f"  Created: {user_data['email']} ({user_data['role'].value})")
+            logger.info("Created: %s (%s)", user_data["email"], user_data["role"].value)
         db.commit()
-        print("\nSeed complete!")
+        logger.info("Seed complete!")
     finally:
         db.close()
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     seed()
